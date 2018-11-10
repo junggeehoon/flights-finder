@@ -1,7 +1,49 @@
 const puppeteer = require('puppeteer');
+const nodemailer = require('nodemailer');
+const axios = require('axios');
+const config = require('./config');
+
+const convertToKRW = async (price, unit) => {
+  try {
+    const country = unit.slice(unit.length - 3);
+    const response = await axios.get(`http://earthquake.kr:23490/query/${country}KRW`);
+    return Math.round(response.data[`${country}KRW`][0] * price);
+  } catch (err) {
+    console.log(err);
+  }
+}
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: config.user,
+    pass: config.pass
+  }
+});
+
+const sendMail = price => {
+  const mailOptions = {
+    from: 'junggeehoon@gmail.com',
+    to: 'pscad_jung@naver.com',
+    subject: 'Your flight is ready!!',
+    text: `The price is: ${price}원`
+  };
+  transporter.sendMail(mailOptions, function(error, info){
+    if (error) {
+      console.log(error);
+    } else {
+      console.log('Email sent: ' + info.response);
+    }
+  });
+}
 
 const extractItems = async () => {
   const elements = document.querySelectorAll('td.sibilings.active > label > span.price');
+  return [...elements].map(el => el.innerHTML);
+}
+
+const extractUnits = async () => {
+  const elements = document.querySelectorAll('#depAvail_Area > div.alR.mar_b20 > span');
   return [...elements].map(el => el.innerHTML);
 }
 
@@ -15,8 +57,11 @@ const visitHomepage = async () => {
   });
   const config = {
     homepage: 'https://flyasiana.com/',
-    departure: '인천',
-    arrival: '샌프란시스코'
+    departure: '샌프란시스코',
+    arrival: '인천',
+    departureDate: 20190115,
+    arrivalDate: 20190526,
+    price: 1300000
   }
   try {
     await page.setViewport({
@@ -48,6 +93,7 @@ const visitHomepage = async () => {
     await page.waitFor(500);
 
     // Select departure date
+    //#dp15418130152  div.ui-datepicker-group.ui-datepicker-group-last > table > tbody > tr:nth-child(3) > td:nth-child(3)
     await page.click('div.ui-datepicker-group.ui-datepicker-group-first > table > tbody > tr:nth-child(3) > td:nth-child(1)');
     await page.waitFor(500);
 
@@ -65,12 +111,30 @@ const visitHomepage = async () => {
     await page.click('#registTravel');
     await page.waitFor(500);
 
+
+    // Only in case of U.S
+    // Disable popup
     await page.click('#expCase > div.layer_pop > div.btn_wrap_ceType2 > button.btn_M.red');
-    await page.waitFor(3000);
+    await page.waitFor(4000);
 
-    const results = await page.evaluate(extractItems);
+    // Extract price
+    const prices = await page.evaluate(extractItems);
+    let price = parseFloat(prices[0].replace(/,/g, ''));
 
-    console.log(results);
+    // Extract unit
+    const units = await page.evaluate(extractUnits);
+    const unit = units[0];
+
+    // Convert unit to KRW
+    if (unit !== '단위 : KRW') {
+      price = await convertToKRW(price, unit);
+    }
+    
+    console.log(price);
+    if (price < config.price) {
+      sendMail(price);
+    }
+
     browser.close();
     return;
 
@@ -78,5 +142,5 @@ const visitHomepage = async () => {
     console.log(err);
   }
 }
-
+// setInterval(visitHomepage, 60000);
 visitHomepage();
